@@ -40,10 +40,6 @@ class YtDlpEngine implements DownloadEngine {
   /// User-configured absolute path to yt-dlp (may be empty).
   String executableOverride;
 
-  /// Cap Instagram profile downloads so huge accounts don't run forever.
-  /// Raise if you intentionally want more posts per profile.
-  static const instagramProfilePlaylistEnd = 50;
-
   @override
   bool get supported =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
@@ -143,6 +139,7 @@ class YtDlpEngine implements DownloadEngine {
 
     final pluginDirs = _resolvePluginDirs();
     final isIgProfile = isInstagramProfileInput(url);
+    final isIgStory = isInstagramStoryOrHighlightInput(url);
 
     final args = <String>[
       '--newline',
@@ -150,11 +147,9 @@ class YtDlpEngine implements DownloadEngine {
       if (ignoreSslErrors) '--no-check-certificate',
       if (cookieFilePath != null) ...['--cookies', cookieFilePath],
       if (pluginDirs != null) ...['--plugin-dirs', pluginDirs],
-      if (isIgProfile) ...[
-        '--playlist-end',
-        '$instagramProfilePlaylistEnd',
-        '--ignore-errors',
-      ],
+      // Posts are capped inside the profile plugin so highlight albums
+      // are not truncated by --playlist-end.
+      if (isIgProfile || isIgStory) '--ignore-errors',
       '--continue', // resume partially downloaded files
       '--no-overwrites',
       '--restrict-filenames',

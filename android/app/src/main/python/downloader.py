@@ -337,9 +337,201 @@ def _install_instagram_image_support():
 _install_instagram_image_support()
 
 
-# Cap how many posts a profile download pulls. Huge accounts can be tens of
-# thousands of items; raise this if you intentionally want more.
+# Cap how many feed posts a profile download pulls. Highlights are extra.
 _INSTAGRAM_PROFILE_PLAYLIST_END = 50
+
+
+def _decode_instagram_highlight_share(code):
+    """Decode /s/<base64> share tokens of the form highlight:<id>."""
+    import base64
+    import binascii
+
+    token = (code or "").split("?", 1)[0].strip()
+    if not token:
+        return None
+    token = token.replace("-", "+").replace("_", "/")
+    token += "=" * ((-len(token)) % 4)
+    try:
+        text = base64.b64decode(token).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+    if text.startswith("highlight:") and text.split(":", 1)[1].isdigit():
+        return text.split(":", 1)[1]
+    return None
+
+
+def _highlight_numeric_id(reel):
+    hid = reel.get("id") or reel.get("pk")
+    if hid is None:
+        return None
+    hid = str(hid)
+    if hid.startswith("highlight:"):
+        hid = hid.split(":", 1)[1]
+    return hid if hid.isdigit() else None
+
+
+def _resolve_instagram_user_id(self, username):
+    from yt_dlp.utils import ExtractorError, traverse_obj
+
+    search = self._download_json(
+        "https://www.instagram.com/web/search/topsearch/",
+        username,
+        "Searching for user",
+        fatal=False,
+        headers=self._api_headers,
+        query={"query": username, "context": "blended", "count": 5},
+    ) or {}
+    for entry in search.get("users") or []:
+        user = entry.get("user") or {}
+        if (user.get("username") or "").lower() == username.lower():
+            user_id = str(user.get("pk") or user.get("id") or "")
+            if user_id:
+                return user_id
+
+    info = self._download_json(
+        f"{self._API_BASE_URL}/users/web_profile_info/",
+        username,
+        "Downloading user info",
+        headers=self._api_headers,
+        query={"username": username},
+    )
+    user_id = traverse_obj(info, ("data", "user", "id"), expected_type=str)
+    if not user_id:
+        raise ExtractorError(
+            f"Unable to resolve Instagram user id for {username}",
+            expected=True,
+        )
+    return user_id
+
+
+def _install_instagram_story_support():
+    """Skip the broken highlight webpage scrape; call reels_media with cookies."""
+    try:
+        from yt_dlp.extractor.instagram import InstagramStoryIE, _pk_to_id
+        from yt_dlp.utils import ExtractorError, filter_dict, traverse_obj
+    except ImportError:
+        return
+    if getattr(InstagramStoryIE, "_vidfetch_story_patch", False):
+        return
+
+    def _real_extract(self, url):
+        mobj = self._match_valid_url(url)
+        username, story_id, share = mobj.group("user", "id", "share")
+
+        if share:
+            story_id = _decode_instagram_highlight_share(share)
+            if not story_id:
+                raise ExtractorError(
+                    "Unsupported Instagram share link. Open the highlight "
+                    "and paste the /stories/highlights/… URL instead.",
+                    expected=True,
+                )
+            username = "highlights"
+
+        if username == "highlights" and not story_id:
+            raise ExtractorError(
+                "Input URL is missing a highlight ID", expected=True
+            )
+
+        if not self._get_cookies("https://www.instagram.com/").get("sessionid"):
+            self.raise_login_required(
+                "Instagram highlights and stories require a logged-in session. "
+                "Sign in or import cookies in Settings."
+            )
+
+        display_id = story_id or username
+        if username == "highlights":
+            reel_id = f"highlight:{story_id}"
+            user_id = None
+        else:
+            user_id = _resolve_instagram_user_id(self, username)
+            reel_id = user_id
+
+        payload = self._download_json(
+            f"{self._API_BASE_URL}/feed/reels_media/",
+            display_id,
+            "Downloading reel media",
+            fatal=False,
+            headers=self._api_headers,
+            query={"reel_ids": reel_id},
+        ) or {}
+
+        reels = payload.get("reels") or {}
+        reel = reels.get(reel_id)
+        if not reel:
+            for key, value in reels.items():
+                if str(key) == str(reel_id):
+                    reel = value
+                    break
+        if not reel:
+            for item in payload.get("reels_media") or []:
+                if str(item.get("id") or "") == str(reel_id):
+                    reel = item
+                    break
+        if not reel:
+            self.raise_login_required(
+                "Instagram did not return this highlight or story. "
+                "Sign in or import cookies in Settings."
+            )
+
+        user_info = reel.get("user") or {}
+        if user_id is None:
+            user_id = str(user_info.get("pk") or user_info.get("id") or "")
+        full_name = user_info.get("full_name")
+        story_title = reel.get("title") or f"Story by {username}"
+
+        info_data = []
+        for item in reel.get("items") or []:
+            item.setdefault("user", {}).update(user_info)
+            extracted = self._extract_product(item, get_comments=False)
+            entries = (
+                extracted.get("entries")
+                if extracted.get("_type") == "playlist"
+                else [extracted]
+            )
+            for entry in entries or []:
+                if not entry or not entry.get("formats"):
+                    continue
+                info_data.append({
+                    "uploader": full_name,
+                    "uploader_id": user_id,
+                    **filter_dict(entry),
+                })
+
+        if not info_data:
+            raise ExtractorError(
+                "No downloadable video in this highlight or story",
+                expected=True,
+            )
+
+        if (
+            username != "highlights"
+            and story_id
+            and not self._yes_playlist(username, story_id)
+        ):
+            wanted = _pk_to_id(story_id)
+            match = traverse_obj(
+                info_data, (lambda _, v: v.get("id") == wanted, any)
+            )
+            if match:
+                return match
+
+        return self.playlist_result(
+            info_data,
+            playlist_id=story_id or display_id,
+            playlist_title=story_title,
+        )
+
+    InstagramStoryIE._VALID_URL = (
+        r"https?://(?:www\.)?instagram\.com/"
+        r"(?:stories/(?P<user>[^/?#]+)(?:/(?P<id>\d+))?"
+        r"|s/(?P<share>[^/?#]+))"
+    )
+    InstagramStoryIE._real_extract = _real_extract
+    InstagramStoryIE._vidfetch_story_patch = True
+
+
+_install_instagram_story_support()
 
 
 def _install_instagram_profile_support():
@@ -348,46 +540,72 @@ def _install_instagram_profile_support():
     Stock yt-dlp still scrapes window._sharedData (marked _WORKING=False).
     Logged-in cookies can resolve the user via web/search/topsearch and page
     posts from i.instagram.com/api/v1/feed/user/{id}/, yielding /p/ URLs so
-    InstagramIE (plus our image patch) handles each post.
+    InstagramIE (plus our image patch) handles each post. Highlight albums
+    on the profile are yielded first as /stories/highlights/<id>/ URLs.
     """
     try:
-        from yt_dlp.extractor.instagram import InstagramIE, InstagramUserIE
-        from yt_dlp.utils import ExtractorError, traverse_obj
+        from yt_dlp.extractor.instagram import (
+            InstagramIE,
+            InstagramStoryIE,
+            InstagramUserIE,
+        )
     except ImportError:
         return
     if getattr(InstagramUserIE, "_vidfetch_profile_patch", False):
         return
 
-    def _resolve_user_id(self, username):
-        search = self._download_json(
-            "https://www.instagram.com/web/search/topsearch/",
+    def _iter_highlights(self, user_id, username):
+        tray = self._download_json(
+            f"{self._API_BASE_URL}/highlights/{user_id}/highlights_tray/",
             username,
-            "Searching for user",
+            "Downloading highlights tray",
             fatal=False,
             headers=self._api_headers,
-            query={"query": username, "context": "blended", "count": 5},
         ) or {}
-        for entry in search.get("users") or []:
-            user = entry.get("user") or {}
-            if (user.get("username") or "").lower() == username.lower():
-                user_id = str(user.get("pk") or user.get("id") or "")
-                if user_id:
-                    return user_id
-
-        info = self._download_json(
-            f"{self._API_BASE_URL}/users/web_profile_info/",
-            username,
-            "Downloading user info",
-            headers=self._api_headers,
-            query={"username": username},
-        )
-        user_id = traverse_obj(info, ("data", "user", "id"), expected_type=str)
-        if not user_id:
-            raise ExtractorError(
-                f"Unable to resolve Instagram user id for {username}",
-                expected=True,
+        for reel in tray.get("tray") or []:
+            hid = _highlight_numeric_id(reel)
+            if not hid:
+                continue
+            yield self.url_result(
+                f"https://www.instagram.com/stories/highlights/{hid}/",
+                ie=InstagramStoryIE.ie_key(),
+                video_id=hid,
+                video_title=reel.get("title") or hid,
             )
-        return user_id
+
+    def _iter_posts(self, user_id, username):
+        max_id = None
+        page = 0
+        yielded = 0
+        while yielded < _INSTAGRAM_PROFILE_PLAYLIST_END:
+            page += 1
+            query = {"count": 12}
+            if max_id:
+                query["max_id"] = max_id
+            feed = self._download_json(
+                f"{self._API_BASE_URL}/feed/user/{user_id}/",
+                username,
+                f"Downloading feed page {page}",
+                headers=self._api_headers,
+                query=query,
+            )
+            for item in feed.get("items") or []:
+                code = item.get("code")
+                if not code:
+                    continue
+                yield self.url_result(
+                    f"https://www.instagram.com/p/{code}/",
+                    ie=InstagramIE.ie_key(),
+                    video_id=code,
+                )
+                yielded += 1
+                if yielded >= _INSTAGRAM_PROFILE_PLAYLIST_END:
+                    return
+            if not feed.get("more_available"):
+                return
+            max_id = feed.get("next_max_id")
+            if not max_id:
+                return
 
     def _real_extract(self, url):
         # Stock _VALID_URL uses [^/]+ so ?igsh=… is swallowed into the id.
@@ -398,40 +616,14 @@ def _install_instagram_profile_support():
                 "Sign in or import cookies in Settings."
             )
 
-        user_id = _resolve_user_id(self, username)
+        user_id = _resolve_instagram_user_id(self, username)
 
         def entries():
-            max_id = None
-            page = 0
-            while True:
-                page += 1
-                query = {"count": 12}
-                if max_id:
-                    query["max_id"] = max_id
-                feed = self._download_json(
-                    f"{self._API_BASE_URL}/feed/user/{user_id}/",
-                    username,
-                    f"Downloading feed page {page}",
-                    headers=self._api_headers,
-                    query=query,
-                )
-                for item in feed.get("items") or []:
-                    code = item.get("code")
-                    if not code:
-                        continue
-                    yield self.url_result(
-                        f"https://www.instagram.com/p/{code}/",
-                        ie=InstagramIE.ie_key(),
-                        video_id=code,
-                    )
-                if not feed.get("more_available"):
-                    break
-                max_id = feed.get("next_max_id")
-                if not max_id:
-                    break
+            yield from _iter_highlights(self, user_id, username)
+            yield from _iter_posts(self, user_id, username)
 
         return self.playlist_result(
-            entries(), username, f"Posts by {username}"
+            entries(), username, f"Profile of {username}"
         )
 
     InstagramUserIE._WORKING = True
@@ -460,10 +652,26 @@ def _is_instagram_profile_url(url):
     if len(parts) != 1:
         return False
     reserved = {
-        "p", "tv", "reel", "reels", "stories", "explore", "accounts",
+        "p", "tv", "reel", "reels", "stories", "s", "explore", "accounts",
         "about", "legal", "direct", "share", "developer", "ids",
     }
     return parts[0].lower() not in reserved
+
+
+def _is_instagram_story_url(url):
+    """True for /stories/… highlights and /s/ share links."""
+    try:
+        from urllib.parse import urlparse
+    except ImportError:
+        return False
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if "instagram.com" not in host and host != "instagr.am":
+        return False
+    parts = [p for p in (parsed.path or "").split("/") if p]
+    if not parts:
+        return False
+    return parts[0].lower() in {"stories", "s"}
 
 
 def _collect_filepaths(info):
@@ -597,6 +805,7 @@ def download(task_id, url, output_dir, format_selector, cancel_event, callback,
             callback.onProgress(task_id, json.dumps(payload))
 
     is_profile = _is_instagram_profile_url(url)
+    is_story = _is_instagram_story_url(url)
     can_merge = _ffmpeg_usable(ffmpeg_location)
     has_qjs = bool(qjs_location and os.path.isfile(qjs_location))
     _install_ejs_asset_fallback(ejs_dir)
@@ -652,9 +861,9 @@ def download(task_id, url, output_dir, format_selector, cancel_event, callback,
         opts["js_runtimes"] = {}
     if cookiefile and os.path.exists(cookiefile):
         opts["cookiefile"] = cookiefile
-    if is_profile:
-        opts["playlistend"] = _INSTAGRAM_PROFILE_PLAYLIST_END
-        # One bad/deleted/429 post must not abort the rest of the profile.
+    if is_profile or is_story:
+        # Posts are capped in the profile extractor so highlights are not
+        # truncated by playlistend. One bad item must not abort the rest.
         opts["ignoreerrors"] = True
     if _is_youtube_url(url):
         # android + web covers most videos; tv often needs extra PO tokens.

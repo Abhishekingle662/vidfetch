@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 /// Normalizes user paste input into a downloadable URL.
 ///
 /// Accepts full http(s) URLs as-is, prepends `https://` for common bare
 /// host pastes (TikTok / Snapchat / YouTube / Instagram), and turns
 /// Instagram usernames (`mariaxzhang_`, `@mariaxzhang_`) into profile URLs.
+/// Instagram `/s/` highlight share links become `/stories/highlights/<id>/`.
 String? normalizeDownloadInput(String raw) {
   final trimmed = raw.trim();
   if (trimmed.isEmpty) return null;
@@ -11,7 +14,7 @@ String? normalizeDownloadInput(String raw) {
   if (asUri != null &&
       asUri.hasScheme &&
       (asUri.scheme == 'http' || asUri.scheme == 'https')) {
-    return _stripInstagramShareParams(asUri) ?? trimmed;
+    return _normalizeInstagramUrl(asUri) ?? trimmed;
   }
 
   final withHttps = _httpsForBareHost(trimmed);
@@ -40,6 +43,22 @@ bool isInstagramProfileInput(String input) {
   final parts = uri.pathSegments.where((s) => s.isNotEmpty).toList();
   if (parts.length != 1) return false;
   return !_instagramReservedPaths.contains(parts.first.toLowerCase());
+}
+
+/// Highlight albums (`/stories/highlights/<id>`) and 24h stories, including
+/// `/s/` share links after [normalizeDownloadInput].
+bool isInstagramStoryOrHighlightInput(String input) {
+  final normalized = normalizeDownloadInput(input) ?? input.trim();
+  final uri = Uri.tryParse(normalized);
+  if (uri == null || !uri.hasScheme) return false;
+  final host = uri.host.toLowerCase();
+  if (!host.contains('instagram.com') && host != 'instagr.am') {
+    return false;
+  }
+  final parts = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+  if (parts.isEmpty) return false;
+  final first = parts.first.toLowerCase();
+  return first == 'stories' || first == 's';
 }
 
 bool looksLikeInstagramInput(String input) {
@@ -103,21 +122,56 @@ String? _httpsForBareHost(String input) {
   final candidate = 'https://$input';
   final uri = Uri.tryParse(candidate);
   if (uri == null || uri.host.isEmpty) return null;
-  return _stripInstagramShareParams(uri) ?? candidate;
+  return _normalizeInstagramUrl(uri) ?? candidate;
 }
 
-/// Instagram share links append `?igsh=…` (and similar). yt-dlp's
-/// InstagramUserIE regex treats `[^/]+` as the username, so the query string
-/// gets baked into the id and profile resolve fails / 429s.
-String? _stripInstagramShareParams(Uri uri) {
+/// Instagram share links append `?igsh=…`. `/s/<base64>` highlight shares
+/// decode to `highlight:<id>` and are rewritten to `/stories/highlights/<id>/`.
+String? _normalizeInstagramUrl(Uri uri) {
   final host = uri.host.toLowerCase();
   if (!host.contains('instagram.com') && host != 'instagr.am') {
     return null;
   }
+  final highlight = _rewriteInstagramHighlightShare(uri);
+  if (highlight != null) return highlight;
   if (uri.hasQuery || uri.hasFragment) {
-    return uri.replace(query: '', fragment: '').toString();
+    return Uri(
+      scheme: uri.scheme,
+      userInfo: uri.userInfo,
+      host: uri.host,
+      path: uri.path,
+    ).toString();
   }
   return null;
+}
+
+/// `https://www.instagram.com/s/aGlnaGxpZ2h0OjE4MDkwOTQ2MDQ4MTIzOTc4`
+/// is Instagram's share form of `/stories/highlights/18090946048123978/`.
+String? _rewriteInstagramHighlightShare(Uri uri) {
+  final parts = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+  if (parts.length < 2 || parts.first.toLowerCase() != 's') {
+    return null;
+  }
+  final highlightId = decodeInstagramHighlightShareId(parts[1]);
+  if (highlightId == null) return null;
+  return 'https://www.instagram.com/stories/highlights/$highlightId/';
+}
+
+/// Decodes an Instagram `/s/` share token. Returns the numeric highlight id
+/// when the payload is `highlight:<id>`, otherwise null.
+String? decodeInstagramHighlightShareId(String raw) {
+  var token = raw.split('?').first.trim();
+  if (token.isEmpty) return null;
+  token = token.replaceAll('-', '+').replaceAll('_', '/');
+  final pad = (4 - token.length % 4) % 4;
+  token = token.padRight(token.length + pad, '=');
+  try {
+    final text = utf8.decode(base64.decode(token), allowMalformed: false);
+    final match = RegExp(r'^highlight:(\d+)$').firstMatch(text);
+    return match?.group(1);
+  } on FormatException {
+    return null;
+  }
 }
 
 final _instagramUsernameRe = RegExp(r'^@?([A-Za-z0-9._]{1,30})$');
@@ -128,6 +182,7 @@ const _instagramReservedPaths = {
   'reel',
   'reels',
   'stories',
+  's',
   'explore',
   'accounts',
   'about',

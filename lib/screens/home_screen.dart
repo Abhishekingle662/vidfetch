@@ -38,25 +38,35 @@ class _HomeScreenState extends State<HomeScreen> {
     final settings = context.read<SettingsService>();
 
     if (looksLikeInstagramInput(url) && !settings.hasInstagramCookies) {
+      final isProfile = isInstagramProfileInput(url);
+      final isHighlight = isInstagramStoryOrHighlightInput(url);
       return _promptPlatformLogin(
-        title: isInstagramProfileInput(url)
-            ? 'Instagram login needed for profiles'
-            : 'Instagram login needed',
-        androidBody: isInstagramProfileInput(url)
-            ? 'Downloading a whole profile needs Instagram cookies. '
-                'VidFetch saves up to the latest 50 posts (videos and photos). '
-                'Sign in now so VidFetch can save them.'
-            : 'This post may require Instagram cookies. Sign in now so '
-                'VidFetch can save them and download private or '
-                'login-required videos.',
-        desktopBody: isInstagramProfileInput(url)
-            ? 'Downloading a whole profile needs Instagram cookies. '
-                'VidFetch saves up to the latest 50 posts (videos and photos). '
-                'Import a Netscape cookies.txt (e.g. cookies_ins.txt '
-                'in your VidFetch download folder) from Settings.'
-            : 'This post may require Instagram cookies. Import a '
-                'Netscape cookies.txt (e.g. cookies_ins.txt in your '
-                'VidFetch download folder) from Settings, then try again.',
+        title: isHighlight
+            ? 'Instagram login needed for highlights'
+            : isProfile
+                ? 'Instagram login needed for profiles'
+                : 'Instagram login needed',
+        androidBody: isHighlight
+            ? 'Highlighted stories and 24h stories need Instagram cookies. '
+                'Sign in now so VidFetch can save the videos in that album.'
+            : isProfile
+                ? 'Downloading a whole profile needs Instagram cookies. '
+                    'VidFetch saves highlight albums plus the latest 50 posts. '
+                    'Sign in now so VidFetch can save them.'
+                : 'This post may require Instagram cookies. Sign in now so '
+                    'VidFetch can save them and download private or '
+                    'login-required videos.',
+        desktopBody: isHighlight
+            ? 'Highlighted stories and 24h stories need Instagram cookies. '
+                'Import a Netscape cookies.txt from Settings, then try again.'
+            : isProfile
+                ? 'Downloading a whole profile needs Instagram cookies. '
+                    'VidFetch saves highlight albums plus the latest 50 posts. '
+                    'Import a Netscape cookies.txt (e.g. cookies_ins.txt '
+                    'in your VidFetch download folder) from Settings.'
+                : 'This post may require Instagram cookies. Import a '
+                    'Netscape cookies.txt (e.g. cookies_ins.txt in your '
+                    'VidFetch download folder) from Settings, then try again.',
         onAndroidSignIn: () async {
           final path = await AndroidYtDlpEngine.instagramLogin();
           if (!mounted) return false;
@@ -290,8 +300,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text(
                     'Paste a link from YouTube, Instagram, TikTok,\n'
                     'Snapchat Spotlight, X, Facebook…\n'
-                    'or an Instagram @username for a profile\n'
-                    '(up to 50 latest posts).',
+                    'an Instagram highlight, or @username for a\n'
+                    'profile (highlights + latest 50 posts).',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Theme.of(context).colorScheme.outline,

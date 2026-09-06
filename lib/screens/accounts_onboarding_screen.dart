@@ -80,8 +80,9 @@ class _AccountsOnboardingScreenState extends State<AccountsOnboardingScreen> {
               ),
               const SizedBox(height: 12),
               Text(
-                'Sign in inside VidFetch so private Instagram posts and '
-                'age-restricted YouTube videos can download. Your browser '
+                'Sign in inside VidFetch so private Instagram posts, '
+                'highlights, and age-restricted YouTube videos can download. '
+                'Your browser '
                 'and other apps stay untouched — cookies stay in this app only.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: scheme.onSurfaceVariant,
