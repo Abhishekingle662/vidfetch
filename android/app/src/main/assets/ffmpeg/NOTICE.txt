@@ -1,0 +1,8 @@
+FFmpeg (Android binaries)
+-------------------------
+This app bundles prebuilt ffmpeg executables for Android (arm64-v8a, x86_64)
+from https://github.com/Khang-NT/ffmpeg-binary-android (lite builds).
+
+FFmpeg is licensed under the LGPL / GPL depending on build configuration.
+These lite binaries are used only to merge YouTube adaptive video+audio
+streams via yt-dlp. Source for FFmpeg: https://ffmpeg.org/
