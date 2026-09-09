@@ -25,6 +25,8 @@ interface ProgressCallback {
 
 class MainActivity : FlutterActivity() {
     private lateinit var channel: MethodChannel
+    private lateinit var torrentChannel: MethodChannel
+    private lateinit var torrentSession: TorrentSession
     private val executor = Executors.newFixedThreadPool(2)
     private val cancelEvents = ConcurrentHashMap<String, PyObject>()
     private var loginResult: MethodChannel.Result? = null
@@ -56,6 +58,37 @@ class MainActivity : FlutterActivity() {
                 )
             } catch (_: Exception) {
                 // Best-effort diagnostics only.
+            }
+        }
+
+        torrentChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "vidfetch/torrent",
+        )
+        torrentSession = TorrentSession(this) { method, args ->
+            runOnUiThread { torrentChannel.invokeMethod(method, args) }
+        }
+        torrentChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> {
+                    val id = call.argument<String>("id")
+                    val source = call.argument<String>("source")
+                    if (id.isNullOrEmpty() || source.isNullOrEmpty()) {
+                        result.error("bad_args", "id and source are required", null)
+                    } else {
+                        torrentSession.start(id, source)
+                        result.success(null)
+                    }
+                }
+                "kill" -> {
+                    torrentSession.kill(call.argument<String>("id") ?: "")
+                    result.success(null)
+                }
+                "abandon" -> {
+                    torrentSession.abandon(call.argument<String>("source") ?: "")
+                    result.success(null)
+                }
+                else -> result.notImplemented()
             }
         }
 
@@ -99,6 +132,28 @@ class MainActivity : FlutterActivity() {
                 }
                 "openUri" -> {
                     result.success(openUri(call.argument<String>("uri")!!))
+                }
+                "exportFile" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrEmpty()) {
+                        result.error("bad_args", "path is required", null)
+                    } else {
+                        try {
+                            val source = File(path)
+                            if (!source.isFile) {
+                                result.error("not_found", "File not found", null)
+                            } else {
+                                val uri = exportToDownloads(source)
+                                val display =
+                                    "${Environment.DIRECTORY_DOWNLOADS}/VidFetch/${source.name}"
+                                result.success(
+                                    mapOf("filePath" to display, "uri" to uri.toString())
+                                )
+                            }
+                        } catch (e: Exception) {
+                            result.error("export_failed", e.message, null)
+                        }
+                    }
                 }
                 else -> result.notImplemented()
             }

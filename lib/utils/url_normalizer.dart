@@ -2,13 +2,18 @@ import 'dart:convert';
 
 /// Normalizes user paste input into a downloadable URL.
 ///
-/// Accepts full http(s) URLs as-is, prepends `https://` for common bare
-/// host pastes (TikTok / Snapchat / YouTube / Instagram), and turns
-/// Instagram usernames (`mariaxzhang_`, `@mariaxzhang_`) into profile URLs.
+/// Accepts `magnet:?xt=urn:btih:` (hex or base32 infohash), full http(s)
+/// URLs as-is, prepends `https://` for common bare host pastes (TikTok /
+/// Snapchat / YouTube / Instagram), and turns Instagram usernames
+/// (`mariaxzhang_`, `@mariaxzhang_`) into profile URLs.
 /// Instagram `/s/` highlight share links become `/stories/highlights/<id>/`.
 String? normalizeDownloadInput(String raw) {
   final trimmed = raw.trim();
   if (trimmed.isEmpty) return null;
+
+  if (looksLikeMagnetInput(trimmed)) {
+    return _normalizeMagnet(trimmed);
+  }
 
   final asUri = Uri.tryParse(trimmed);
   if (asUri != null &&
@@ -88,6 +93,42 @@ bool looksLikeTikTokInput(String input) {
 bool looksLikeSnapchatInput(String input) {
   final host = _hostOf(input);
   return host == 'snapchat.com' || host.endsWith('.snapchat.com');
+}
+
+/// True when [input] starts with the magnet scheme (valid or not).
+bool looksLikeMagnetInput(String input) =>
+    input.trim().toLowerCase().startsWith('magnet:');
+
+/// True when [input] is (or normalizes to) a magnet with a btih infohash.
+bool isMagnetUri(String input) {
+  final normalized = normalizeDownloadInput(input);
+  return normalized != null && looksLikeMagnetInput(normalized);
+}
+
+/// `dn` display name from a magnet, if present.
+String? magnetDisplayName(String magnet) {
+  final dn = Uri.tryParse(magnet.trim())?.queryParameters['dn']?.trim();
+  if (dn == null || dn.isEmpty) return null;
+  return dn;
+}
+
+/// `magnet:?xt=urn:btih:<40 hex | 32 base32>` plus optional extra params.
+final _btihXtRe = RegExp(
+  r'^urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})$',
+  caseSensitive: false,
+);
+
+String? _normalizeMagnet(String input) {
+  final uri = Uri.tryParse(input);
+  if (uri == null || uri.scheme.toLowerCase() != 'magnet') return null;
+  for (final entry in uri.queryParametersAll.entries) {
+    final key = entry.key.toLowerCase();
+    if (key != 'xt' && !key.startsWith('xt.')) continue;
+    for (final value in entry.value) {
+      if (_btihXtRe.hasMatch(value.trim())) return input;
+    }
+  }
+  return null;
 }
 
 String _hostOf(String input) {

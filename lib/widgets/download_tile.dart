@@ -75,7 +75,10 @@ class DownloadTile extends StatelessWidget {
     final manager = context.read<DownloadManager>();
     final statusColor = _statusColor(context);
 
-    final subtitleParts = <String>[task.status.label];
+    final subtitleParts = <String>[
+      if (task.kind == DownloadKind.torrent) 'Torrent',
+      task.status.label,
+    ];
     if (task.status == DownloadStatus.downloading) {
       if (task.progress != null) {
         subtitleParts.add('${(task.progress! * 100).toStringAsFixed(1)}%');

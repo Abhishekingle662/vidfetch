@@ -226,6 +226,13 @@ class SettingsScreen extends StatelessWidget {
             subtitle: Text(
               'Downloads videos with yt-dlp from YouTube, Instagram, TikTok, '
               'Snapchat Spotlight, X, Facebook, Vimeo and many more sites.\n\n'
+              'Magnets and .torrent files download on this device over '
+              'BitTorrent. Your IP is visible to trackers and peers while a '
+              'torrent is downloading. When the file finishes, or you pause or '
+              'cancel, the torrent is removed and the session shuts down — no '
+              'background seeding. On Android, DHT, peer exchange, and an '
+              'incoming listen port run only during an active download. UPnP, '
+              'NAT-PMP, and local discovery stay off.\n\n'
               'Only download content you have the right to save.',
             ),
           ),

@@ -72,6 +72,10 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            pickFirsts += "**/*.so"
+        }
+        resources {
+            pickFirsts += "org/libtorrent4j/**"
         }
     }
 }
@@ -88,6 +92,8 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-37")
+    implementation("org.libtorrent4j:libtorrent4j-android-x86_64:2.1.0-37")
 }
 
 chaquopy {

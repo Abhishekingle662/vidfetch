@@ -52,6 +52,27 @@ class AndroidYtDlpEngine implements DownloadEngine {
   @override
   bool get supported => true;
 
+  /// Copies a staged file into public Downloads/VidFetch via MediaStore.
+  static Future<DownloadResult> exportFile(String path) async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'exportFile',
+        {'path': path},
+      );
+      final filePath = result?['filePath'] as String?;
+      final uri = result?['uri'] as String?;
+      if (filePath == null || uri == null) {
+        return DownloadResult(success: false, error: 'Export failed');
+      }
+      return DownloadResult(success: true, filePath: filePath, uri: uri);
+    } on PlatformException catch (e) {
+      return DownloadResult(
+        success: false,
+        error: e.message ?? 'Export failed',
+      );
+    }
+  }
+
   /// Opens a content:// URI with the system video player/viewer.
   static Future<bool> openUri(String uri) async {
     try {

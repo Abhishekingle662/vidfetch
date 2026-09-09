@@ -154,7 +154,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final url = _urlController.text.trim();
     final manager = context.read<DownloadManager>();
 
-    if (!await _ensureCookiesForUrl(url)) return;
+    if (looksLikeMagnetInput(url)) {
+      if (normalizeDownloadInput(url) == null) {
+        _showMessage('That magnet link is missing a valid BitTorrent infohash.');
+        return;
+      }
+    } else if (!await _ensureCookiesForUrl(url)) {
+      return;
+    }
     if (!mounted) return;
 
     final error = manager.addUrl(_urlController.text);
@@ -164,6 +171,19 @@ class _HomeScreenState extends State<HomeScreen> {
       _urlController.clear();
       _showMessage('Added to queue');
     }
+  }
+
+  Future<void> _pickTorrentFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['torrent'],
+      dialogTitle: 'Select a .torrent file',
+    );
+    final path = result?.files.single.path;
+    if (path == null) return;
+    if (!mounted) return;
+    final error = context.read<DownloadManager>().addTorrentFile(path);
+    _showMessage(error ?? 'Added to queue');
   }
 
   Future<void> _pasteFromClipboard() async {
@@ -229,7 +249,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 TextField(
                   controller: _urlController,
                   decoration: InputDecoration(
-                    hintText: 'Paste a URL or Instagram @username',
+                    hintText: 'Paste a URL, magnet, or Instagram @username',
                     prefixIcon: const Icon(Icons.link),
                     suffixIcon: IconButton(
                       tooltip: 'Paste from clipboard',
@@ -265,6 +285,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _pickTorrentFile,
+                    icon: const Icon(Icons.attachment),
+                    label: const Text('Add .torrent file'),
+                  ),
+                ),
                 Text(
                   'Quality: ${settings.quality}  ·  Saving to '
                   '${Platform.isAndroid ? 'Downloads/VidFetch' : settings.downloadFolder}',
@@ -300,8 +328,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text(
                     'Paste a link from YouTube, Instagram, TikTok,\n'
                     'Snapchat Spotlight, X, Facebook…\n'
-                    'an Instagram highlight, or @username for a\n'
-                    'profile (highlights + latest 50 posts).',
+                    'an Instagram highlight, @username, or a magnet.\n'
+                    'Use Add .torrent file for torrent files.',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Theme.of(context).colorScheme.outline,

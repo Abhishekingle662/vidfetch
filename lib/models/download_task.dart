@@ -1,3 +1,5 @@
+enum DownloadKind { video, torrent }
+
 enum DownloadStatus {
   queued,
   fetching,
@@ -43,12 +45,20 @@ class DownloadTask {
     required this.url,
     required this.quality,
     required this.destinationFolder,
+    this.kind = DownloadKind.video,
+    this.torrentFilePath,
   });
 
   final String id;
   final String url;
   final String quality;
   final String destinationFolder;
+  final DownloadKind kind;
+
+  /// Local path of a picked `.torrent` file, when [kind] is torrent.
+  final String? torrentFilePath;
+
+  String get torrentSource => torrentFilePath ?? url;
 
   DownloadStatus status = DownloadStatus.queued;
 

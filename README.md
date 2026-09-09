@@ -17,13 +17,24 @@ Instagram, TikTok, X/Twitter, Facebook, Vimeo and 1000+ other sites.
   child processes keep running while the app is open/minimized.
 - **Settings** — download folder, default quality, notification toggle,
   and an optional explicit yt-dlp path.
+- **Torrents** — paste a magnet or pick a `.torrent` file. The phone
+  downloads on-device into the same queue and `Downloads/VidFetch`.
+  No PC, qBittorrent, or gateway. Download only: when the file finishes
+  (or you pause/cancel) the torrent is removed and the session is shut
+  down — no background seeding. Your IP is still visible to trackers
+  and peers **while downloading**. On Android (libtorrent4j): DHT, PEX,
+  and an incoming TCP/uTP listen port run only during an active
+  download. UPnP, NAT-PMP, and local discovery stay off (no router
+  punch / LAN announce). Windows uses `dtorrent_task_v2`, which may
+  enable LSD/UPnP for the duration of a download; we stop that task
+  as soon as the file is done.
 
 ## Platform support
 
 | Platform | UI | Downloads |
 |----------|----|-----------|
-| Windows  | ✅ | ✅ runs `yt-dlp` as a process |
-| Android  | ✅ | ✅ yt-dlp in Chaquopy + bundled **ffmpeg** (A/V merge) + **QuickJS** (YouTube JS challenges). Files export to `Downloads/VidFetch`. |
+| Windows  | ✅ | ✅ `yt-dlp` as a process; magnets/.torrent via `dtorrent_task_v2` |
+| Android  | ✅ | ✅ yt-dlp in Chaquopy + bundled **ffmpeg** + **QuickJS**. Torrents via libtorrent4j. Files export to `Downloads/VidFetch`. |
 
 ## Requirements (Windows)
 
@@ -73,6 +84,7 @@ lib/
 │   ├── ytdlp_engine.dart         # desktop: yt-dlp process wrapper
 │   ├── android_ytdlp_engine.dart # Android: platform channel to Chaquopy
 │   ├── download_manager.dart     # queue, concurrency, pause/resume/cancel
+│   ├── local_torrent_engine.dart # on-device magnets / .torrent files
 │   ├── settings_service.dart     # shared_preferences-backed settings
 │   ├── notification_service.dart # progress/completion notifications
 │   └── background_service.dart   # Android foreground service keeper
@@ -80,8 +92,11 @@ lib/
 └── widgets/download_tile.dart    # per-download card with actions
 
 android/app/src/main/
-├── python/downloader.py          # yt-dlp API bridge (progress hooks, cancel)
-└── kotlin/.../MainActivity.kt    # channel, threads, MediaStore export
+├── python/downloader.py          # yt-dlp API (progress hooks, cancel)
+└── kotlin/...                    # yt-dlp channel, libtorrent session, MediaStore
 ```
+
+On-device torrents need only the existing `INTERNET` permission plus the
+download foreground service. VidFetch does not scrape other apps.
 
 Only download content you have the right to save.
