@@ -119,9 +119,12 @@ class TorrentSession(
                 val handle = waitForHandle(sm, attached)
                     ?: throw IllegalStateException("Could not add that torrent.")
                 applyTorrentFlags(handle)
+                forceAnnounce(handle)
             }
 
             var lastName: String? = null
+            var elapsedSec = 0
+            var lastAnnounceSec = 0
             while (!flag.get()) {
                 val handle = synchronized(lock) { sm.find(attached) }
                 if (handle == null || !handle.isValid) {
@@ -131,6 +134,17 @@ class TorrentSession(
                 val err = status.errorCode()
                 if (err != null && err.isError) {
                     throw IllegalStateException(err.message)
+                }
+                val peers = status.numPeers()
+                if (peers == 0 && elapsedSec - lastAnnounceSec >= ANNOUNCE_INTERVAL_SEC) {
+                    forceAnnounce(handle)
+                    lastAnnounceSec = elapsedSec
+                }
+                if (!status.hasMetadata() && elapsedSec >= METADATA_TIMEOUT_SEC) {
+                    throw IllegalStateException(
+                        "Could not fetch torrent metadata. Try a magnet that includes " +
+                            "trackers, or try again.",
+                    )
                 }
                 val name = status.name()
                 if (!name.isNullOrEmpty() && name != lastName) {
@@ -151,7 +165,8 @@ class TorrentSession(
                         "speed" to rate,
                         "eta" to eta,
                         "name" to name,
-                        "peers" to status.numPeers(),
+                        "peers" to peers,
+                        "dhtNodes" to sm.stats().dhtNodes(),
                     ),
                 )
                 if (status.hasMetadata() && (status.isFinished || status.isSeeding || progress >= 1.0)) {
@@ -167,6 +182,7 @@ class TorrentSession(
                     return primary
                 }
                 Thread.sleep(1000)
+                elapsedSec++
             }
             throw InterruptedException("killed")
         } finally {
@@ -223,6 +239,12 @@ class TorrentSession(
         handle.unsetFlags(TorrentFlags.DISABLE_PEX)
         handle.unsetFlags(TorrentFlags.DISABLE_DHT)
         handle.resume()
+    }
+
+    private fun forceAnnounce(handle: TorrentHandle) {
+        if (!handle.isValid) return
+        handle.forceReannounce()
+        handle.forceDHTAnnounce()
     }
 
     private fun stopUploading(handle: TorrentHandle) {
@@ -353,8 +375,17 @@ class TorrentSession(
         pack.setBoolean(settings_pack.bool_types.enable_outgoing_tcp.swigValue(), true)
         pack.setBoolean(settings_pack.bool_types.enable_outgoing_utp.swigValue(), true)
         pack.seedingOutgoingConnections(false)
-        // Port 0 = OS-assigned high port. Incoming does not need UPnP.
-        pack.listenInterfaces("0.0.0.0:0,[::]:0")
+        pack.setBoolean(settings_pack.bool_types.announce_to_all_trackers.swigValue(), true)
+        pack.setBoolean(settings_pack.bool_types.announce_to_all_tiers.swigValue(), true)
+        // Explicit routers: defaultSettings() already sets dht_bootstrap_nodes
+        // to a single host, which skips SessionManager's extra-router path.
+        pack.setDhtBootstrapNodes(
+            "dht.libtorrent.org:25401,router.bittorrent.com:6881," +
+                "router.utorrent.com:6881,dht.transmissionbt.com:6881," +
+                "router.silotis.us:6881",
+        )
+        // IPv4 only. Port 0 = OS-assigned high port. Incoming does not need UPnP.
+        pack.listenInterfaces("0.0.0.0:0")
         pack.connectionsLimit(100)
         pack.activeDownloads(4)
         pack.activeLimit(4)
@@ -430,6 +461,8 @@ class TorrentSession(
     }
 
     companion object {
+        private const val METADATA_TIMEOUT_SEC = 120
+        private const val ANNOUNCE_INTERVAL_SEC = 30
         private val XT_REGEX = Regex("xt=urn:btih:([A-Za-z0-9]+)", RegexOption.IGNORE_CASE)
         private val VIDEO_EXT = listOf(
             ".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".ts",

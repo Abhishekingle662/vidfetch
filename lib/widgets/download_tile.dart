@@ -80,8 +80,10 @@ class DownloadTile extends StatelessWidget {
       task.status.label,
     ];
     if (task.status == DownloadStatus.downloading) {
-      if (task.progress != null) {
-        subtitleParts.add('${(task.progress! * 100).toStringAsFixed(1)}%');
+      final progress = task.progress;
+      if (progress != null &&
+          !(task.kind == DownloadKind.torrent && progress <= 0)) {
+        subtitleParts.add('${(progress * 100).toStringAsFixed(1)}%');
       }
       if (task.speed != null) subtitleParts.add(task.speed!);
       if (task.eta != null) subtitleParts.add('ETA ${task.eta}');

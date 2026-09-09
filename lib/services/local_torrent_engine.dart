@@ -172,6 +172,7 @@ class LocalTorrentEngine implements DownloadEngine {
           _formatTorrentSpeed(
             (args['speed'] as num?)?.toDouble(),
             (args['peers'] as num?)?.toInt(),
+            (args['dhtNodes'] as num?)?.toInt(),
           ),
           _formatEta((args['eta'] as num?)?.toInt()),
         );
@@ -390,14 +391,22 @@ class LocalTorrentEngine implements DownloadEngine {
   static bool looksLikeMagnetSource(String source) =>
       source.trim().toLowerCase().startsWith('magnet:');
 
-  static String? _formatTorrentSpeed(double? bytesPerSec, int? peers) {
+  static String? _formatTorrentSpeed(
+    double? bytesPerSec,
+    int? peers, [
+    int? dhtNodes,
+  ]) {
     final speed = _formatSpeed(bytesPerSec);
     final swarm = peers == null
         ? null
         : '$peers ${peers == 1 ? 'peer' : 'peers'}';
-    if (speed == null && swarm == null) return null;
-    if (speed == null) return swarm;
-    if (swarm == null) return speed;
+    final dht = dhtNodes == null ? null : 'DHT $dhtNodes';
+    if (speed == null) {
+      if (swarm != null && dht != null) return '$swarm · $dht';
+      return swarm ?? dht;
+    }
+    if (swarm == null) return dht == null ? speed : '$speed · $dht';
+    if (peers == 0 && dht != null) return '$speed · $swarm · $dht';
     return '$speed · $swarm';
   }
 
